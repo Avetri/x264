@@ -644,6 +644,133 @@ void x264_sei_buffering_period_write( x264_t *h, bs_t *s )
     x264_sei_write( s, tmp_buf, bs_pos( &q ) / 8, SEI_BUFFERING_PERIOD );
 }
 
+void x264_sei_pic_timing_tc_write( x264_t *h, bs_t *s, uint8_t *tc, int tc_size )
+{
+    x264_sps_t *sps = h->sps;
+    bs_t q;
+    uint32_t n, ff, hh, mm, ss, drop, clock_timestamp_flag, units_field_based_flag, counting_type, full_timestamp_flag, discontinuity_flag;
+    uint32_t tc_dw;
+    ALIGNED_4( uint8_t tmp_buf[100] );
+    M32( tmp_buf ) = 0; // shut up gcc
+    bs_init( &q, tmp_buf, 100 );
+
+    bs_realign( &q );
+
+    if( sps->vui.b_nal_hrd_parameters_present || sps->vui.b_vcl_hrd_parameters_present )
+    {
+        bs_write( &q, sps->vui.hrd.i_cpb_removal_delay_length, h->fenc->i_cpb_delay - h->i_cpb_delay_pir_offset );
+        bs_write( &q, sps->vui.hrd.i_dpb_output_delay_length, h->fenc->i_dpb_output_delay );
+    }
+
+    /*
+    put_bits(&pb, 2, m); // num_clock_ts
+    put_bits(&pb, 1, 1); // clock_timestamp_flag
+    put_bits(&pb, 1, 1); // units_field_based_flag
+    put_bits(&pb, 5, 0); // counting_type
+    put_bits(&pb, 1, 1); // full_timestamp_flag
+    put_bits(&pb, 1, 0); // discontinuity_flag
+    put_bits(&pb, 1, drop);
+    put_bits(&pb, 9, ff);
+    put_bits(&pb, 6, ss);
+    put_bits(&pb, 6, mm);
+    put_bits(&pb, 5, hh);
+    put_bits(&pb, 5, 0);
+
+    TO
+
+    46          pic_struct                                               0000 = 0
+    50          clock_timestamp_flag[0]                                     1 = 1
+    51          ct_type                                                    00 = 0
+    53          nuit_field_based_flag                                       1 = 1
+    54          counting_type                                           00000 = 0
+    59          full_timestamp_flag                                         1 = 1
+    60          discontinuity_flag                                          0 = 0
+    61          cnt_dropped_flag                                            0 = 0
+    62          n_frames                                             00001010 = 10
+    70          seconds_value                                          001111 = 15
+    76          minutes_value                                          001000 = 8
+    82          hours_value                                             01010 = 10
+    87          time_offset                                                00 = 0
+    89          bit_equal_to_one                                            1 = 1
+    90          bit_equal_to_zero                                           0 = 0
+    91          bit_equal_to_zero                                           0 = 0
+    92          bit_equal_to_zero                                           0 = 0
+    93          bit_equal_to_zero                                           0 = 0
+    94          bit_equal_to_zero                                           0 = 0
+    95          bit_equal_to_zero                                           0 = 0
+    96          rbsp_stop_one_bit                                           1 = 1
+    97          rbsp_alignment_zero_bit                                     0 = 0
+    98          rbsp_alignment_zero_bit                                     0 = 0
+    99          rbsp_alignment_zero_bit                                     0 = 0
+    100         rbsp_alignment_zero_bit                                     0 = 0
+    101         rbsp_alignment_zero_bit                                     0 = 0
+    102         rbsp_alignment_zero_bit                                     0 = 0
+    103         rbsp_alignment_zero_bit                                     0 = 0
+    */
+
+
+    tc_dw = (uint32_t)(tc[0]);
+    n                      = tc_dw>>6 & 0x03;
+    clock_timestamp_flag   = tc_dw>>5 & 0x01;
+    units_field_based_flag = tc_dw>>4 & 0x01;
+    counting_type          = tc_dw    & 0x0f;
+    if (n == 0)
+    {
+        bs_align_10( &q );
+        x264_sei_write( s, tmp_buf, bs_pos( &q ) / 8, SEI_PIC_TIMING );
+        return;
+    }
+
+    if( 0 < n && sps->vui.b_pic_struct_present )
+    {
+        tc_dw = (uint32_t)(tc[1]);
+        tc_dw <<= 8;
+        tc_dw |= (uint32_t)(tc[2]);
+        tc_dw <<= 8;
+        tc_dw |= (uint32_t)(tc[3]);
+        tc_dw <<= 8;
+        tc_dw |= (uint32_t)(tc[4]);
+        counting_type <<= 1;
+        counting_type      |= tc_dw>>31 & 0x01;
+        full_timestamp_flag = tc_dw>>30 & 0x01;
+        discontinuity_flag  = tc_dw>>29 & 0x01;
+        drop                = tc_dw>>28 & 0x01;
+        ff                  = tc_dw>>19 & 0x01ff; // 9-bit frames
+        ss                  = tc_dw>>13 & 0x3f; // 6-bit seconds
+        mm                  = tc_dw>>7  & 0x3f; // 6-bit minutes
+        hh                  = tc_dw>>2  & 0x1f; // 5-bit hours
+
+        bs_write( &q, 4, 0 );
+        bs_write( &q, 1, clock_timestamp_flag ); // clock_timestamp_flag
+        bs_write( &q, 2, 0 ); // ct_type
+        bs_write( &q, 1, units_field_based_flag ); // nuit_field_based_flag
+        bs_write( &q, 5, counting_type ); // counting_type
+        bs_write( &q, 1, full_timestamp_flag ); // full_timestamp_flag
+        bs_write( &q, 1, discontinuity_flag ); // discontinuity_flag
+        bs_write( &q, 1, drop ); // cnt_dropped_flag
+        bs_write( &q, 8, ff%24 ); // n_frames
+        bs_write( &q, 6, ss ); // seconds_value
+        bs_write( &q, 6, mm ); // minutes_value
+        bs_write( &q, 5, hh ); // hours_value
+        bs_write( &q, sps->vui.hrd.i_time_offset_length, 0 ); // time_offset
+    }
+    else
+    {
+        bs_write( &q, 4, h->fenc->i_pic_struct-1 ); // We use index 0 for "Auto"
+
+        // These clock timestamps are not standardised so we don't set them
+        // They could be time of origin, capture or alternative ideal display
+        for( int i = 0; i < num_clock_ts[h->fenc->i_pic_struct]; i++ )
+        {
+            bs_write1( &q, 0 ); // clock_timestamp_flag
+        }
+    }
+
+    bs_align_10( &q );
+
+    x264_sei_write( s, tmp_buf, bs_pos( &q ) / 8, SEI_PIC_TIMING );
+}
+
 void x264_sei_pic_timing_write( x264_t *h, bs_t *s )
 {
     x264_sps_t *sps = h->sps;

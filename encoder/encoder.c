@@ -3328,6 +3328,8 @@ int     x264_encoder_encode( x264_t *h,
     x264_t *thread_current, *thread_prev, *thread_oldest;
     int i_nal_type, i_nal_ref_idc, i_global_qp;
     int overhead = NALU_OVERHEAD;
+    uint8_t * tc = NULL;
+    int tc_size = 0;
 
 #if HAVE_OPENCL
     if( h->opencl.b_fatal_error )
@@ -3705,6 +3707,18 @@ int     x264_encoder_encode( x264_t *h,
     /* write extra sei */
     for( int i = 0; i < h->fenc->extra_sei.num_payloads; i++ )
     {
+        if (SEI_TYPE_TIME_CODE == h->fenc->extra_sei.payloads[i].payload_type)
+        {
+            tc = malloc(h->fenc->extra_sei.payloads[i].payload_size);
+            memcpy(tc, h->fenc->extra_sei.payloads[i].payload, h->fenc->extra_sei.payloads[i].payload_size);
+            tc_size = h->fenc->extra_sei.payloads[i].payload_size;
+            if( h->fenc->extra_sei.sei_free )
+            {
+                h->fenc->extra_sei.sei_free( h->fenc->extra_sei.payloads[i].payload );
+                h->fenc->extra_sei.payloads[i].payload = NULL;
+            }
+            continue;
+        }
         nal_start( h, NAL_SEI, NAL_PRIORITY_DISPOSABLE );
         x264_sei_write( &h->out.bs, h->fenc->extra_sei.payloads[i].payload, h->fenc->extra_sei.payloads[i].payload_size,
                         h->fenc->extra_sei.payloads[i].payload_type );
@@ -3790,7 +3804,15 @@ int     x264_encoder_encode( x264_t *h,
     if( h->sps->vui.b_pic_struct_present || h->sps->vui.b_nal_hrd_parameters_present )
     {
         nal_start( h, NAL_SEI, NAL_PRIORITY_DISPOSABLE );
-        x264_sei_pic_timing_write( h, &h->out.bs );
+        if (NULL != tc)
+        {
+            x264_sei_pic_timing_tc_write( h, &h->out.bs, tc, tc_size );
+            free(tc);
+        }
+        else
+        {
+            x264_sei_pic_timing_write( h, &h->out.bs );
+        }
         if( nal_end( h ) )
             return -1;
         overhead += h->out.nal[h->out.i_nal-1].i_payload + SEI_OVERHEAD;
