@@ -748,7 +748,7 @@ void x264_sei_pic_timing_tc_write( x264_t *h, bs_t *s, uint8_t *tc, int tc_size 
         bs_write( &q, 1, full_timestamp_flag ); // full_timestamp_flag
         bs_write( &q, 1, discontinuity_flag ); // discontinuity_flag
         bs_write( &q, 1, drop ); // cnt_dropped_flag
-        bs_write( &q, 8, ff%24 ); // n_frames
+        bs_write( &q, 8, ff ); // n_frames
         bs_write( &q, 6, ss ); // seconds_value
         bs_write( &q, 6, mm ); // minutes_value
         bs_write( &q, 5, hh ); // hours_value
